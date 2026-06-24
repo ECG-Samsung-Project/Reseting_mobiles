@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 from datetime import datetime
@@ -8,22 +9,29 @@ from pathlib import Path
 ADB_PATH = "adb"
 
 PHONE_DOCUMENTS_PATH = "/sdcard/Documents"
-OUTPUT_ROOT = Path("output")
+PHONE_RAW_RING_PATH = "/sdcard/Documents/RAW_DATA_RING"
+
+# Salvar output em uma pasta chamada "output" no diretório acima do atual.
+OUTPUT_ROOT = Path(__file__).resolve().parent.parent / "output"
+
+PARTICIPANT_ID_REGEX = re.compile(r"(Id\d+)", re.IGNORECASE)
+INVALID_IDS = {
+    "Id000000000",
+    "Id00000000",
+    "Id0000000",
+    "Id000000",
+}
 
 
 def run_adb_command(args: list[str]) -> subprocess.CompletedProcess:
-    """
-    Executa comando ADB e retorna o resultado.
-    """
     try:
-        result = subprocess.run(
+        return subprocess.run(
             [ADB_PATH, *args],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace"
         )
-        return result
     except FileNotFoundError:
         raise RuntimeError(
             "ADB não encontrado. Instale o Android Platform Tools "
@@ -32,9 +40,6 @@ def run_adb_command(args: list[str]) -> subprocess.CompletedProcess:
 
 
 def check_device_connected() -> str:
-    """
-    Verifica se existe exatamente um celular conectado via ADB.
-    """
     result = run_adb_command(["devices"])
 
     if result.returncode != 0:
@@ -69,16 +74,13 @@ def check_device_connected() -> str:
     if len(devices) > 1:
         raise RuntimeError(
             f"Mais de um celular conectado: {devices}\n"
-            "Conecte apenas um aparelho por vez, porque caos já basta o humano."
+            "Conecte apenas um aparelho por vez."
         )
 
     return devices[0]
 
 
 def check_phone_documents_exists() -> None:
-    """
-    Verifica se a pasta Documents existe no celular.
-    """
     result = run_adb_command(["shell", "ls", PHONE_DOCUMENTS_PATH])
 
     if result.returncode != 0:
@@ -88,17 +90,98 @@ def check_phone_documents_exists() -> None:
         )
 
 
-def sanitize_folder_name(value: str) -> str:
+def normalize_participant_id(value: str) -> str:
     """
-    Remove caracteres problemáticos para nome de pasta.
+    Normaliza para o padrão Id26321088.
     """
     value = value.strip()
+    return "Id" + value[2:]
 
-    invalid_chars = '<>:"/\\|?*'
-    for char in invalid_chars:
-        value = value.replace(char, "_")
 
-    return value
+def is_valid_participant_id(participant_id: str) -> bool:
+    """
+    Desconsidera IDs zerados tipo Id000000000.
+    Porque aparentemente o sistema achou elegante gerar lixo antes do dado útil.
+    """
+    normalized = normalize_participant_id(participant_id)
+
+    if normalized in INVALID_IDS:
+        return False
+
+    digits = normalized[2:]
+
+    if not digits:
+        return False
+
+    if set(digits) == {"0"}:
+        return False
+
+    return True
+
+
+def extract_participant_ids_from_text(text: str) -> list[str]:
+    """
+    Extrai todos os IDs encontrados e remove IDs inválidos/zerados.
+    """
+    matches = PARTICIPANT_ID_REGEX.findall(text)
+
+    valid_ids = []
+
+    for match in matches:
+        participant_id = normalize_participant_id(match)
+
+        if not is_valid_participant_id(participant_id):
+            continue
+
+        if participant_id not in valid_ids:
+            valid_ids.append(participant_id)
+
+    return valid_ids
+
+
+def get_participant_id_from_phone() -> str:
+    """
+    Procura o ID do participante nos nomes dos arquivos dentro de:
+    /sdcard/Documents/RAW_DATA_RING
+
+    Ignora IDs zerados, como:
+    Id000000000
+    """
+    print(f"Procurando ID em {PHONE_RAW_RING_PATH}...")
+
+    result = run_adb_command([
+        "shell",
+        "find",
+        PHONE_RAW_RING_PATH,
+        "-type",
+        "f"
+    ])
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Não consegui listar os arquivos em {PHONE_RAW_RING_PATH}.\n"
+            "Confirme se a pasta RAW_DATA_RING existe dentro de Documents.\n"
+            f"Erro:\n{result.stderr}"
+        )
+
+    participant_ids = extract_participant_ids_from_text(result.stdout)
+
+    if not participant_ids:
+        raise RuntimeError(
+            "Não encontrei nenhum ID válido dentro da pasta RAW_DATA_RING.\n"
+            "IDs zerados como Id000000000 são ignorados.\n"
+            "Exemplo esperado:\n"
+            "RingSleepSpO2_Id26321088_DevDAE3_NoDev_..."
+        )
+
+    if len(participant_ids) > 1:
+        raise RuntimeError(
+            "Encontrei mais de um ID válido dentro da RAW_DATA_RING:\n"
+            f"{participant_ids}\n"
+            "Isso pode indicar arquivos misturados de participantes diferentes."
+        )
+
+    return participant_ids[0]
 
 
 def copy_documents_to_output(participant_id: str) -> Path:
@@ -134,19 +217,18 @@ def copy_documents_to_output(participant_id: str) -> Path:
     return destination_folder
 
 
-def create_metadata_json(participant_id: str, destination_folder: Path, device_id: str) -> Path:
-    """
-    Cria um JSON com o mesmo nome da pasta de saída.
-    Exemplo:
-    output/ABC123/
-    output/ABC123.json
-    """
+def create_metadata_json(
+    participant_id: str,
+    destination_folder: Path,
+    device_id: str
+) -> Path:
     json_path = OUTPUT_ROOT / f"{destination_folder.name}.json"
 
     metadata = {
         "participant_id": participant_id,
         "device_id": device_id,
         "source_path": PHONE_DOCUMENTS_PATH,
+        "raw_ring_path": PHONE_RAW_RING_PATH,
         "output_folder": str(destination_folder),
         "extracted_at": datetime.now().isoformat(timespec="seconds"),
         "status": "success"
@@ -161,18 +243,16 @@ def create_metadata_json(participant_id: str, destination_folder: Path, device_i
 def main() -> None:
     print("=== Extração de arquivos do celular ===")
 
-    participant_id = input("Informe o ID do participante: ")
-    participant_id = sanitize_folder_name(participant_id)
-
-    if not participant_id:
-        raise RuntimeError("ID do participante não pode ficar vazio.")
-
     print("\nVerificando celular conectado...")
     device_id = check_device_connected()
     print(f"Celular encontrado: {device_id}")
 
     print(f"\nVerificando pasta {PHONE_DOCUMENTS_PATH}...")
     check_phone_documents_exists()
+
+    print("\nBuscando ID do participante automaticamente...")
+    participant_id = get_participant_id_from_phone()
+    print(f"ID encontrado: {participant_id}")
 
     print("\nCopiando arquivos para a pasta output...")
     destination_folder = copy_documents_to_output(participant_id)
