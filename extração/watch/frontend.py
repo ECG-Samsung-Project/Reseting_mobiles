@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import messagebox
 
+from core.scrollable_frame import create_scrollable_frame
+
 try:
     from .backend import WatchBackend
 except ImportError:
@@ -10,7 +12,7 @@ except ImportError:
 def create_watch_frame(parent: tk.Widget) -> tk.Frame:
     backend = WatchBackend()
 
-    frame = tk.Frame(parent)
+    outer_frame, frame = create_scrollable_frame(parent)
 
     title_label = tk.Label(
         frame,
@@ -26,6 +28,7 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
         wraplength=550,
     )
     description_label.pack(pady=4)
+
 
     watch_frame = tk.Frame(frame)
     watch_frame.pack(pady=8)
@@ -131,6 +134,41 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
         font=("Arial", 10),
     )
 
+    def set_result_text(text: str) -> None:
+        result_text.config(state="normal")
+        result_text.delete("1.0", tk.END)
+        result_text.insert(tk.END, text)
+        result_text.config(state="disabled")
+
+    def format_watch_inspection_result(result: dict) -> str:
+        lines = [
+            f"Dispositivo: {result['device_id']}",
+            f"ID do relógio encontrado: {result['selected_id']}",
+            "",
+            f"Documents: {result['documents_path']}",
+            f"Pastas: {result['folder_count']}",
+            f"Arquivos: {result['file_count']}",
+            "",
+            result["tree_text"],
+        ]
+
+        return "\n".join(lines)
+
+    def handle_inspect_watch_documents() -> None:
+        try:
+            result = backend.inspect_watch_documents(
+                ip=watch_ip_entry.get(),
+                connect_port=connect_port_entry.get(),
+                status_callback=set_status,
+            )
+
+            set_result_text(format_watch_inspection_result(result))
+            set_status(f"Varredura concluída: {result['selected_id']}")
+
+        except Exception as error:
+            set_status("Erro na varredura.")
+            messagebox.showerror("Erro", str(error))
+
     def set_status(text: str) -> None:
         status_label.config(text=text)
         frame.update_idletasks()
@@ -187,6 +225,13 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
                 f"Dispositivo alvo definido:\n{target_device_id}",
             )
 
+            result = backend.inspect_watch_documents(
+                ip=watch_ip_entry.get(),
+                connect_port=connect_port_entry.get(),
+                status_callback=set_status,
+            )
+
+            set_result_text(format_watch_inspection_result(result))
         except Exception as error:
             set_status("Erro na conexão.")
             messagebox.showerror("Erro", str(error))
@@ -243,6 +288,7 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
     )
     pair_button.grid(row=0, column=2, rowspan=2, padx=10, pady=5)
 
+
     connect_button = tk.Button(
         connect_frame,
         text="Conectar relógio",
@@ -261,6 +307,15 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
     )
     disconnect_button.pack(pady=6)
 
+    inspect_button = tk.Button(
+        frame,
+        text="Verificar Documents do relógio",
+        font=("Arial", 10),
+        width=32,
+        command=handle_inspect_watch_documents,
+    )
+    inspect_button.pack(pady=6)
+    
     extract_button = tk.Button(
         frame,
         text="3. Pegar pasta Documents",
@@ -272,4 +327,13 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
 
     status_label.pack(pady=5)
 
-    return frame
+    result_text = tk.Text(
+        frame,
+        height=12,
+        width=78,
+        font=("Consolas", 9),
+        wrap="none",
+        state="disabled",
+    )
+    result_text.pack(pady=8)
+    return outer_frame

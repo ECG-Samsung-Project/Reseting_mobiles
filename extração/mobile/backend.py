@@ -1,18 +1,21 @@
-import json
-import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from core.adb_client import AdbClient
-from core.android_metadata import get_android_device_metadata
-from core.local_summary import get_local_output_summary
+from core.android_fs import AndroidFileSystem
+from core.metadata_writer import write_json_metadata
 
 from .config import MobileExtractionConfig
+from .document_copier import MobileDocumentCopier
+from .mobile_metadata import MobileMetadataBuilder
 from .participant_id import ParticipantIdParser
+from .participant_lookup import ParticipantLookup
+from .participant_resolver import MobileParticipantResolver
 
 
 StatusCallback = Callable[[str], None] | None
+ParticipantIdPrompt = Callable[[str, str | None], str | None] | None
 
 
 class MobileBackend:
@@ -21,94 +24,35 @@ class MobileBackend:
         config: MobileExtractionConfig | None = None,
     ) -> None:
         self.config = config or MobileExtractionConfig()
+
         self.adb = AdbClient(self.config.adb_path)
+        self.android_fs = AndroidFileSystem(self.adb)
 
-        self.output_root = self.config.output_root
-        self.output_root.mkdir(parents=True, exist_ok=True)
-
-    def get_document_folder_paths(self) -> list[str]:
-        command = (
-            f'for d in "{self.config.phone_documents_path}"/*; do '
-            f'[ -d "$d" ] && echo "$d"; '
-            f'done'
+        self.participant_lookup = ParticipantLookup(
+            self.config.participants_summary_csv
         )
 
-        result = self.adb.run(["shell", command], check=False)
-
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Não consegui varrer {self.config.phone_documents_path}.\n"
-                f"Erro:\n{result.stderr or result.stdout}"
-            )
-
-        return [
-            line.strip()
-            for line in result.stdout.splitlines()
-            if line.strip()
-        ]
-
-    def get_document_folder_summaries(self) -> list[dict]:
-        folder_paths = self.get_document_folder_paths()
-
-        summaries = []
-
-        for folder_path in folder_paths:
-            folder_name = folder_path.rstrip("/").split("/")[-1]
-            summary = self.get_phone_path_summary(folder_path)
-
-            summaries.append(
-                {
-                    "folder_name": folder_name,
-                    "folder_path": folder_path,
-                    "file_count": summary["file_count"],
-                    "folder_count": summary["folder_count"],
-                    "size_mb": summary["size_mb"],
-                    "sample_files": summary.get("sample_files", []),
-                }
-            )
-
-        return sorted(
-            summaries,
-            key=lambda item: item["folder_name"].lower(),
+        self.participant_resolver = MobileParticipantResolver(
+            android_fs=self.android_fs,
+            raw_ring_path=self.config.phone_raw_ring_path,
+            participant_lookup=self.participant_lookup,
         )
 
-    def inspect_phone_documents(
-        self,
-        status_callback: StatusCallback = None,
-    ) -> dict:
-        def set_status(text: str) -> None:
-            if status_callback:
-                status_callback(text)
+        self.document_copier = MobileDocumentCopier(
+            adb=self.adb,
+            android_fs=self.android_fs,
+            documents_path=self.config.phone_documents_path,
+        )
 
-        set_status("Verificando celular conectado...")
-        device_id = self.check_device_connected()
+        self.metadata_builder = MobileMetadataBuilder(
+            config=self.config,
+            adb=self.adb,
+            android_fs=self.android_fs,
+            participant_resolver=self.participant_resolver,
+        )
 
-        set_status(f"Celular encontrado: {device_id}")
-
-        set_status(f"Verificando pasta {self.config.phone_documents_path}...")
-        self.check_phone_documents_exists()
-
-        set_status("Varrendo pasta Documents...")
-        folder_summaries = self.get_document_folder_summaries()
-
-        participant_id = None
-        participant_id_error = None
-
-        set_status("Buscando ID do participante...")
-        try:
-            participant_id = self.get_participant_id_from_phone()
-        except RuntimeError as error:
-            participant_id_error = str(error)
-
-        set_status("Verificação concluída.")
-
-        return {
-            "device_id": device_id,
-            "documents_path": self.config.phone_documents_path,
-            "folders": folder_summaries,
-            "participant_id": participant_id,
-            "participant_id_error": participant_id_error,
-        }
+    def get_output_root(self, collection_context: str) -> Path:
+        return self.config.get_output_root(collection_context)
 
     @staticmethod
     def get_current_timestamp() -> str:
@@ -180,243 +124,160 @@ class MobileBackend:
 
         return devices[0]
 
-    def check_phone_documents_exists(self) -> None:
-        result = self.adb.run(
-            ["shell", "ls", self.config.phone_documents_path],
-            check=False,
-        )
+    @staticmethod
+    def _validate_manual_participant_id(participant_id: str) -> str:
+        participant_id = participant_id.strip()
 
-        if result.returncode != 0:
+        if not participant_id:
+            raise RuntimeError("O ID do participante não pode ficar vazio.")
+
+        if len(participant_id) > 100:
             raise RuntimeError(
-                f"Não consegui acessar {self.config.phone_documents_path} no celular.\n"
-                f"Erro:\n{result.stderr or result.stdout}"
+                "O ID do participante é muito longo. "
+                "Informe no máximo 100 caracteres."
             )
 
-    def get_raw_ring_file_paths(self) -> list[str]:
-        result = self.adb.run(
-            [
-                "shell",
-                "find",
-                self.config.phone_raw_ring_path,
-                "-type",
-                "f",
-            ],
-            check=False,
-        )
-
-        if result.returncode != 0:
+        if not all(
+            character.isalnum() or character in {"-", "_"}
+            for character in participant_id
+        ):
             raise RuntimeError(
-                f"Não consegui listar os arquivos em {self.config.phone_raw_ring_path}.\n"
-                "Confirme se a pasta RAW_DATA_RING existe dentro de Documents.\n"
-                f"Erro:\n{result.stderr or result.stdout}"
+                "O ID informado contém caracteres inválidos.\n"
+                "Use apenas letras, números, hífen (-) ou sublinhado (_)."
             )
 
-        return [
-            line.strip()
-            for line in result.stdout.splitlines()
-            if line.strip()
-        ]
+        return participant_id
 
-    def get_participant_id_from_phone(self) -> str:
-        files = self.get_raw_ring_file_paths()
-        text = "\n".join(files)
-
-        participant_ids = ParticipantIdParser.extract_valid_ids(text)
-
-        if not participant_ids:
-            raise RuntimeError(
-                "Não encontrei nenhum ID válido dentro da pasta RAW_DATA_RING.\n"
-                "IDs com 5 zeros seguidos são ignorados.\n"
-                "Exemplo esperado:\n"
-                "RingSleepSpO2_Id26321088_DevDAE3_NoDev_..."
-            )
-
-        return participant_ids[0]
-
-    def get_phone_path_summary(self, phone_path: str) -> dict:
-        files = self.adb.list_files(phone_path, check=False)
-        dirs = self.adb.list_dirs(phone_path, check=False)
-        size_kb = self.adb.get_path_size_kb(phone_path)
-
-        return {
-            "path": phone_path,
-            "file_count": len(files),
-            "folder_count": len(dirs),
-            "size_kb": size_kb,
-            "size_mb": round(size_kb / 1024, 2) if size_kb is not None else None,
-            "sample_files": [Path(file).name for file in files[:10]],
-        }
-
-    def get_raw_ring_metadata(self) -> dict:
+    def resolve_participant(
+        self,
+        participant_id_prompt: ParticipantIdPrompt = None,
+    ) -> dict:
         try:
-            files = self.get_raw_ring_file_paths()
-        except RuntimeError:
-            files = []
+            return self.participant_resolver.resolve_from_phone()
+        except RuntimeError as automatic_error:
+            if participant_id_prompt is None:
+                raise
 
-        text = "\n".join(files)
-
-        valid_ids = ParticipantIdParser.extract_valid_ids(text)
-        ignored_ids = ParticipantIdParser.extract_ignored_ids(text)
-        all_ids_found = ParticipantIdParser.extract_all_ids(text)
-
-        file_names = [Path(file).name for file in files]
-
-        return {
-            "raw_ring_path": self.config.phone_raw_ring_path,
-            "raw_ring_file_count": len(files),
-
-            "ids_found_raw": all_ids_found,
-            "ids_valid": valid_ids,
-            "ignored_ids": ignored_ids,
-            "ignored_rule": "IDs que contêm 5 zeros seguidos nos dígitos são ignorados.",
-
-            "selected_id": valid_ids[0] if valid_ids else None,
-            "has_multiple_valid_ids": len(valid_ids) > 1,
-            "multiple_valid_ids_count": len(valid_ids),
-            "multiple_valid_ids_warning": (
-                "Mais de um ID válido encontrado na RAW_DATA_RING. "
-                "A extração foi feita normalmente usando o primeiro ID válido para nomear a pasta."
-                if len(valid_ids) > 1
+            raw_metadata = self.participant_resolver.get_raw_ring_metadata()
+            raw_ids = raw_metadata["ids_valid"]
+            selected_raw_id = raw_metadata["selected_raw_id"]
+            raw_lookup_key = (
+                ParticipantIdParser.remove_id_prefix(selected_raw_id)
+                if selected_raw_id
                 else None
-            ),
+            )
+            suggested_id = raw_lookup_key
+            prompt_reason = str(automatic_error)
 
-            "sample_files": file_names[:10],
-        }
+            while True:
+                manual_id = participant_id_prompt(prompt_reason, suggested_id)
 
-    def build_destination_folder(
+                if manual_id is None:
+                    raise RuntimeError(
+                        "Não foi possível identificar o participante "
+                        "automaticamente e nenhum ID foi informado."
+                    ) from automatic_error
+
+                try:
+                    participant_id = self._validate_manual_participant_id(manual_id)
+                    break
+                except RuntimeError as validation_error:
+                    prompt_reason = str(validation_error)
+                    suggested_id = manual_id.strip() or suggested_id
+
+            return {
+                "raw_ids": raw_ids,
+                "selected_raw_id": selected_raw_id,
+                "lookup_key": raw_lookup_key or participant_id,
+                "participant_id": participant_id,
+                "lookup_source": "manual_input",
+                "matched_in_csv": False,
+                "has_multiple_valid_ids": raw_metadata["has_multiple_valid_ids"],
+                "multiple_valid_ids_count": raw_metadata[
+                    "multiple_valid_ids_count"
+                ],
+                "multiple_valid_ids_warning": raw_metadata[
+                    "multiple_valid_ids_warning"
+                ],
+                "automatic_resolution_error": str(automatic_error),
+            }
+
+    def inspect_phone_documents(
         self,
-        participant_id: str,
-        timestamp: str,
-    ) -> Path:
-        folder_name = f"{participant_id}_{timestamp}"
-        destination_folder = self.output_root / folder_name
+        status_callback: StatusCallback = None,
+        participant_id_prompt: ParticipantIdPrompt = None,
+    ) -> dict:
+        def set_status(text: str) -> None:
+            if status_callback:
+                status_callback(text)
 
-        if not destination_folder.exists():
-            return destination_folder
+        set_status("Verificando celular conectado...")
+        device_id = self.check_device_connected()
 
-        counter = 2
+        set_status(f"Celular encontrado: {device_id}")
 
-        while True:
-            candidate = self.output_root / f"{folder_name}_{counter}"
+        set_status(f"Verificando pasta {self.config.phone_documents_path}...")
+        self.android_fs.check_path_exists(self.config.phone_documents_path)
 
-            if not candidate.exists():
-                return candidate
-
-            counter += 1
-
-    def copy_documents_to_output(
-        self,
-        participant_id: str,
-        timestamp: str,
-    ) -> Path:
-        self.output_root.mkdir(parents=True, exist_ok=True)
-
-        destination_folder = self.build_destination_folder(
-            participant_id=participant_id,
-            timestamp=timestamp,
+        set_status("Varrendo pasta Documents...")
+        folder_summaries = self.android_fs.get_folder_summaries(
+            self.config.phone_documents_path
         )
 
-        destination_folder.mkdir(parents=True, exist_ok=True)
+        participant_id = None
+        participant_raw_id = None
+        participant_lookup_source = None
+        participant_matched_in_csv = None
+        participant_id_error = None
 
-        result = self.adb.run(
-            [
-                "pull",
-                self.config.phone_documents_path,
-                str(destination_folder),
-            ],
-            check=False,
-        )
+        set_status("Buscando ID do participante...")
 
-        if result.returncode != 0:
-            shutil.rmtree(destination_folder, ignore_errors=True)
-
-            raise RuntimeError(
-                "Erro ao copiar arquivos do celular.\n"
-                f"Comando: adb pull {self.config.phone_documents_path} {destination_folder}\n"
-                f"Erro:\n{result.stderr or result.stdout}"
+        try:
+            participant_resolution = self.resolve_participant(
+                participant_id_prompt=participant_id_prompt,
             )
 
-        return destination_folder
+            participant_id = participant_resolution["participant_id"]
+            participant_raw_id = participant_resolution["selected_raw_id"]
+            participant_lookup_source = participant_resolution["lookup_source"]
+            participant_matched_in_csv = participant_resolution["matched_in_csv"]
 
-    def create_metadata_json(
-        self,
-        participant_id: str,
-        mobile_name: str,
-        destination_folder: Path,
-        device_id: str,
-        timestamp: str,
-    ) -> Path:
-        json_path = self.output_root / f"{destination_folder.name}.json"
+        except RuntimeError as error:
+            participant_id_error = str(error)
 
-        extracted_at = datetime.now()
-        raw_ring_metadata = self.get_raw_ring_metadata()
+        set_status("Verificação concluída.")
 
-        metadata = {
-            "data_type": "mobile",
-            "source_type": "mobile_data",
+        return {
+            "device_id": device_id,
+            "documents_path": self.config.phone_documents_path,
+            "folders": folder_summaries,
 
             "participant_id": participant_id,
-            "id_participant": participant_id,
-
-            "mobile_name": mobile_name,
-
-            "extraction_name": destination_folder.name,
-            "package_name": destination_folder.name,
-
-            "timestamp": timestamp,
-            "collected_date": extracted_at.strftime("%Y-%m-%d"),
-            "extracted_at": extracted_at.isoformat(timespec="seconds"),
-
-            "status": "success",
-
-            "warnings": {
-                "has_multiple_valid_ids": raw_ring_metadata["has_multiple_valid_ids"],
-                "multiple_valid_ids_count": raw_ring_metadata["multiple_valid_ids_count"],
-                "multiple_valid_ids_warning": raw_ring_metadata["multiple_valid_ids_warning"],
-            },
-
-            "source": {
-                "documents_path": self.config.phone_documents_path,
-                "raw_ring_path": self.config.phone_raw_ring_path,
-            },
-
-            "output": {
-                "output_root": str(self.output_root),
-                "output_folder": str(destination_folder),
-                "metadata_json": str(json_path),
-            },
-
-            "phone": get_android_device_metadata(
-                adb=self.adb,
-                device_id=device_id,
-                device_name=mobile_name,
-                name_field="mobile_name",
-            ),
-
-            "phone_documents_summary": self.get_phone_path_summary(
-                self.config.phone_documents_path,
-            ),
-
-            "raw_ring_summary": raw_ring_metadata,
-
-            "local_output_summary": get_local_output_summary(destination_folder),
+            "participant_raw_id": participant_raw_id,
+            "participant_lookup_source": participant_lookup_source,
+            "participant_matched_in_csv": participant_matched_in_csv,
+            "participant_id_error": participant_id_error,
         }
-
-        with json_path.open("w", encoding="utf-8") as file:
-            json.dump(metadata, file, ensure_ascii=False, indent=4)
-
-        return json_path
 
     def extract_documents(
         self,
         mobile_number: str,
+        collection_context: str,
         status_callback: StatusCallback = None,
+        participant_id_prompt: ParticipantIdPrompt = None,
     ) -> dict:
         def set_status(text: str) -> None:
             if status_callback:
                 status_callback(text)
 
         mobile_name = self.format_mobile_name(mobile_number)
+        collection_context = self.config.normalize_collection_context(
+            collection_context
+        )
+        collection_metadata = self.config.get_collection_context_metadata(
+            collection_context
+        )
+        output_root = self.config.get_output_root(collection_context)
         timestamp = self.get_current_timestamp()
 
         set_status("Verificando celular conectado...")
@@ -425,34 +286,91 @@ class MobileBackend:
         set_status(f"Celular encontrado: {device_id}")
 
         set_status(f"Verificando pasta {self.config.phone_documents_path}...")
-        self.check_phone_documents_exists()
+        self.android_fs.check_path_exists(self.config.phone_documents_path)
 
         set_status("Buscando ID do participante automaticamente...")
-        participant_id = self.get_participant_id_from_phone()
-
-        set_status(f"ID encontrado: {participant_id}")
-
-        set_status("Copiando arquivos para landing...")
-        destination_folder = self.copy_documents_to_output(
-            participant_id=participant_id,
-            timestamp=timestamp,
+        participant_resolution = self.resolve_participant(
+            participant_id_prompt=participant_id_prompt,
         )
 
-        set_status("Criando JSON de metadados...")
-        json_path = self.create_metadata_json(
-            participant_id=participant_id,
-            mobile_name=mobile_name,
-            destination_folder=destination_folder,
-            device_id=device_id,
-            timestamp=timestamp,
+        participant_id = participant_resolution["participant_id"]
+        selected_raw_id = participant_resolution["selected_raw_id"]
+
+        if participant_resolution["lookup_source"] == "manual_input":
+            set_status(f"ID informado manualmente: {participant_id}")
+        elif selected_raw_id != participant_id:
+            set_status(f"ID encontrado: {selected_raw_id} -> {participant_id}")
+        else:
+            set_status(f"ID encontrado: {participant_id}")
+
+        set_status(
+            "Copiando arquivos para "
+            f"{collection_metadata['label']}..."
         )
+        set_status(
+            "Copiando arquivos para "
+            f"{collection_metadata['label']}..."
+        )
+
+        staging_folder, archive_path = (
+            self.document_copier.copy_documents_to_staging(
+                participant_id=participant_id,
+                timestamp=timestamp,
+                output_root=output_root,
+            )
+        )
+
+        try:
+            set_status("Criando JSON de metadados...")
+
+            metadata = self.metadata_builder.build_metadata(
+                participant_id=participant_id,
+                mobile_name=mobile_name,
+                staging_folder=staging_folder,
+                archive_path=archive_path,
+                output_root=output_root,
+                device_id=device_id,
+                timestamp=timestamp,
+                participant_resolution=participant_resolution,
+                collection_context=collection_context,
+            )
+
+            write_json_metadata(
+                metadata=metadata,
+                json_path=staging_folder / "metadata.json",
+            )
+
+            set_status("Compactando pacote em ZIP...")
+
+            archive_path = self.document_copier.create_zip_archive(
+                staging_folder=staging_folder,
+                archive_path=archive_path,
+            )
+
+        finally:
+            self.document_copier.cleanup_staging(staging_folder)
 
         set_status("Extração concluída.")
 
         return {
             "mobile_name": mobile_name,
             "device_id": device_id,
+
             "participant_id": participant_id,
-            "output_folder": destination_folder,
-            "json_path": json_path,
+            "raw_participant_id": selected_raw_id,
+            "participant_lookup_source": participant_resolution[
+                "lookup_source"
+            ],
+            "matched_in_csv": participant_resolution[
+                "matched_in_csv"
+            ],
+
+            "collection_context": collection_context,
+            "collection_context_code": collection_metadata["code"],
+            "collection_context_label": collection_metadata["label"],
+            "landing_folder": collection_metadata["folder_name"],
+
+            "output_root": output_root,
+            "output_archive": archive_path,
+            "metadata_file": "metadata.json",
         }

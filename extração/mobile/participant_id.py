@@ -1,26 +1,46 @@
+# mobile/participant_id.py
+
 import re
 
 
 class ParticipantIdParser:
-    id_regex = re.compile(r"(Id\d+)", re.IGNORECASE)
+    id_regex = re.compile(r"(Id[A-Za-z0-9-]+)", re.IGNORECASE)
 
     @classmethod
     def normalize(cls, value: str) -> str:
         value = value.strip()
-        return "Id" + value[2:]
+
+        if value.lower().startswith("id"):
+            return "Id" + value[2:]
+
+        return value
+
+    @classmethod
+    def remove_id_prefix(cls, value: str) -> str:
+        value = cls.normalize(value)
+
+        if value.lower().startswith("id"):
+            return value[2:]
+
+        return value
 
     @classmethod
     def is_valid(cls, participant_id: str) -> bool:
         normalized = cls.normalize(participant_id)
-        digits = normalized[2:]
+        value_without_prefix = cls.remove_id_prefix(normalized)
 
-        if not digits:
+        if not value_without_prefix:
             return False
 
-        if "00000" in digits:
+        if "00000" in value_without_prefix:
             return False
 
         return True
+
+    @classmethod
+    def is_numeric_id(cls, participant_id: str) -> bool:
+        value_without_prefix = cls.remove_id_prefix(participant_id)
+        return value_without_prefix.isdigit()
 
     @classmethod
     def extract_valid_ids(cls, text: str) -> list[str]:

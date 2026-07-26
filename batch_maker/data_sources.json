@@ -1,0 +1,37 @@
+{
+    "participants_summary_csv": "C:\\Users\\Victo\\Documents\\GitHub\\datalake\\serving\\participants_summary\\participants_summary.csv",
+    "output_root": "output",
+    "sources": [
+        {
+            "name": "watch_landing",
+            "root": "C:\\Users\\Victo\\Documents\\GitHub\\datalake\\landing\\watch_data",
+            "recursive": true
+        },
+        {
+            "name": "mobile_landing",
+            "root": "C:\\Users\\Victo\\Documents\\GitHub\\datalake\\landing\\mobile_data",
+            "recursive": true
+        },
+        {
+            "name": "holter_silver",
+            "root": "C:\\Users\\Victo\\Documents\\GitHub\\datalake\\silver\\holter_data",
+            "recursive": true
+        },
+        {
+            "name": "ecg_silver",
+            "root": "C:\\Users\\Victo\\Documents\\GitHub\\datalake\\silver\\ecg_data",
+            "recursive": true
+        },
+        {
+            "name": "eco_landing",
+            "root": "C:\\Users\\Victo\\Documents\\GitHub\\datalake\\landing\\eco_data",
+            "recursive": true
+        },
+        {
+            "name": "redcap_silver",
+            "root": "C:\\Users\\Victo\\Documents\\GitHub\\datalake\\silver\\redcap_data\\redcap_data.parquet",
+            "recursive": false,
+            "scope": "global"
+        }
+    ]
+}
