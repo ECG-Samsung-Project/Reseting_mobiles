@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.log
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+.test-deps/
+
+# APKs são binários fornecidos separadamente.
+apks/phone/*.apk
+apks/watch/*.apk
+
+# Artefatos operacionais podem conter metadados do dispositivo.
+data/backups/*
+data/sessions/*
+data/reports/*
+data/logs/*
+!data/backups/.gitkeep
+!data/sessions/.gitkeep
+!data/reports/.gitkeep
+!data/logs/.gitkeep

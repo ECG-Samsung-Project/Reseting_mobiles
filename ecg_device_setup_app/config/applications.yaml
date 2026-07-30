@@ -1,0 +1,31 @@
+phone:
+  - id: hrp_clinical_phone
+    display_name: HRP Clinical Phone
+    filename: GPT_HRPClinical_Release_2_0_6_Phone.apk
+    package_name: null
+    required: true
+
+  - id: samsung_ring_phone
+    display_name: Samsung Ring Phone
+    filename: com_sec_smartring2-Phone-24120318-1_3_4-1.apk
+    package_name: null
+    required: true
+
+watch:
+  - id: hrp_clinical_watch
+    display_name: HRP Clinical Watch
+    filename: GPT_HRPClinical_2_2_2_Watch.apk
+    package_name: null
+    required: true
+
+  - id: multifrequency_bia
+    display_name: Multi Frequency BIA
+    filename: GPT_MultiFreqBia_v1_3_1.apk
+    package_name: null
+    required: true
+
+  - id: cola_watch
+    display_name: COLA Watch
+    filename: GPT_com.sec.cola_release_1.0.85.apk
+    package_name: null
+    required: true

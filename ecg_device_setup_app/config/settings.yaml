@@ -1,0 +1,13 @@
+adb:
+  executable: null
+  default_timeout_seconds: 60
+
+backup:
+  minimum_free_space_bytes: 5368709120
+
+phone:
+  expected_manufacturer: Samsung
+  expected_model_hint: Galaxy A56
+
+installation:
+  allow_downgrade: false
