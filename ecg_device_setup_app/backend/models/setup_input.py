@@ -43,7 +43,7 @@ class SetupInput(BaseModel):
     participant_id: str = Field(min_length=1, max_length=100)
     kit_id: str = Field(min_length=1, max_length=100)
     google_email: str = Field(min_length=3, max_length=254)
-    google_password: SecretStr = Field(exclude=True, repr=False)
+    google_password: SecretStr = Field(min_length=1, exclude=True, repr=False)
 
     @field_validator("participant_id", "kit_id")
     @classmethod

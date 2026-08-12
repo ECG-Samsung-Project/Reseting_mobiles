@@ -1,8 +1,4 @@
-"""Ponto de entrada temporário da Etapa 1.
-
-O wizard PySide6 pertence à Etapa 4. Até lá, este comando permite validar a
-infraestrutura local sem executar ações destrutivas.
-"""
+"""Ponto de entrada da interface e do preflight em linha de comando."""
 
 from __future__ import annotations
 
@@ -15,18 +11,17 @@ from pydantic import ValidationError
 from backend.models.setup_input import SetupInput
 from backend.services.preflight_service import PreflightService
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Diagnóstico não destrutivo do ECG Device Setup App."
+        description="ECG Device Setup: interface desktop e diagnóstico não destrutivo."
     )
     parser.add_argument(
         "--preflight",
         action="store_true",
-        help="Executa as validações da Etapa 1.",
+        help="Executa as validações em linha de comando, sem abrir a interface.",
     )
     parser.add_argument("--participant-id")
     parser.add_argument("--kit-id")
@@ -49,7 +44,9 @@ def run_preflight(args: argparse.Namespace) -> int:
             google_password=google_password,
         )
     except ValidationError as exc:
-        first_error = exc.errors(include_url=False)[0]["msg"]
+        first_error = str(exc.errors(include_url=False)[0]["msg"]).removeprefix(
+            "Value error, "
+        )
         print(f"Dados inválidos: {first_error}")
         return 2
 
@@ -72,11 +69,16 @@ def main() -> int:
     args = build_parser().parse_args()
     if args.preflight:
         return run_preflight(args)
-    print(
-        "Etapa 1 instalada. Use --preflight para o diagnóstico. "
-        "O frontend PySide6 será implementado na Etapa 4."
-    )
-    return 0
+    try:
+        from frontend.app import run_app
+    except ImportError as exc:
+        print(
+            "Não foi possível carregar o frontend PySide6. "
+            "Instale as dependências com: python -m pip install -r requirements.txt"
+        )
+        print(f"Detalhe técnico: {exc}")
+        return 3
+    return run_app(PROJECT_ROOT)
 
 
 if __name__ == "__main__":

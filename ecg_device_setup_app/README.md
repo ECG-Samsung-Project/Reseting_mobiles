@@ -1,36 +1,41 @@
 # ECG Device Setup App
 
-Aplicação desktop local para conduzir, com segurança e rastreabilidade, a
-preparação de um kit composto por um Samsung Galaxy A56, um Galaxy Watch 8,
-um participante, um kit e uma nova conta Google.
+Aplicação desktop local para conduzir, com segurança e rastreabilidade, a preparação de um kit composto por um celular Android, um relógio, um participante, um kit e uma nova conta Google.
 
 ## Estado atual
 
-A **Etapa 1** está implementada:
+O projeto possui agora um **wizard PySide6 funcional de pré-validação**.
 
-- projeto independente e backend desacoplado de interface;
-- modelos de entrada, dispositivo, sessão, aplicativo e resultado;
-- senha Google apenas em memória, mascarada e excluída de serializações;
-- cliente ADB central, sem `shell=True`, com timeout, dispositivo explícito,
-  entrada padrão segura e cancelamento cooperativo;
-- parser de `adb devices -l` e detecção do único celular USB autorizado;
-- leitura das propriedades mínimas do aparelho;
-- alerta não bloqueante quando o modelo não parece ser Galaxy A56;
-- catálogo YAML dos cinco APKs;
-- preflight agregado de ADB, APKs, celular, espaço livre e escrita local;
-- filtro de logs para senha, pairing code, tokens e segredos cadastrados;
-- testes unitários sem dispositivo real.
+Já está implementado:
 
-Ainda não estão implementados: backup e limpeza (Etapa 2), máquina de estados e
-instalação/pareamento (Etapa 3), wizard PySide6 (Etapa 4), validação final e
-relatórios (Etapa 5). Nenhuma ação destrutiva é executada nesta etapa.
+- tela para participante, kit, e-mail e senha Google;
+- senha mantida somente em memória, mascarada e excluída de serializações;
+- detecção assíncrona do celular por ADB, sem travar a interface;
+- apresentação de modelo, fabricante, serial, Android, build e transporte;
+- mensagens específicas para dispositivo não autorizado, offline ou ausente;
+- pré-validação assíncrona de configurações, APKs, pastas, espaço livre, ADB e celular;
+- resumo final com e-mail mascarado e confirmação obrigatória do operador;
+- painel recolhível de logs operacionais seguros;
+- modo CLI de preflight preservado;
+- testes de backend e testes de interface com `pytest-qt`.
+
+Ainda não estão implementados:
+
+- backup dos arquivos do celular;
+- remoção da conta Samsung;
+- limpeza de `Documents` e `Downloads`;
+- instalação dos APKs;
+- configuração interna dos aplicativos;
+- pareamento e configuração do relógio;
+- persistência e retomada completa do workflow.
+
+O botão final do wizard **não executa ações destrutivas**. Ele apenas confirma que o ambiente passou pela pré-validação.
 
 ## Requisitos
 
 - Windows 10 ou 11;
 - Python 3.11 ou superior;
-- Android SDK Platform Tools, com `adb.exe` no `PATH`, ou caminho configurado em
-  `config/settings.yaml`;
+- Android SDK Platform Tools, com `adb.exe` no `PATH`, ou caminho configurado em `config/settings.yaml`;
 - cabo USB de dados;
 - depuração USB habilitada e autorizada no celular.
 
@@ -45,25 +50,47 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Baixe o Android SDK Platform Tools no site oficial do Android, extraia o pacote
-e adicione a pasta que contém `adb.exe` ao `PATH`. Alternativamente, informe o
-caminho absoluto:
-
-```yaml
-adb:
-  executable: C:\Android\platform-tools\adb.exe
-```
-
-Confirme a instalação com:
+Confirme o ADB:
 
 ```powershell
 adb version
 adb devices -l
 ```
 
-## APKs
+Caso o `adb.exe` não esteja no `PATH`, configure o caminho em `config/settings.yaml`:
 
-Copie os arquivos para os destinos abaixo:
+```yaml
+adb:
+  executable: C:\Android\platform-tools\adb.exe
+```
+
+## Abrir a interface
+
+```powershell
+python .\main.py
+```
+
+Fluxo atual:
+
+1. informar participante, kit, conta e senha Google;
+2. detectar o celular conectado;
+3. executar a pré-validação;
+4. revisar e confirmar os dados.
+
+As consultas ADB e o preflight rodam fora da thread principal da interface.
+
+## Executar somente o preflight no terminal
+
+```powershell
+python .\main.py --preflight `
+  --participant-id ABC-12-2345 `
+  --kit-id 12 `
+  --google-email conta@gmail.com
+```
+
+A senha é solicitada com entrada protegida.
+
+## APKs esperados
 
 ```text
 apks/phone/GPT_HRPClinical_Release_2_0_6_Phone.apk
@@ -73,49 +100,36 @@ apks/watch/GPT_MultiFreqBia_v1_3_1.apk
 apks/watch/GPT_com.sec.cola_release_1.0.85.apk
 ```
 
-O catálogo está em `config/applications.yaml`. Para adicionar um APK, inclua
-uma entrada no grupo `phone` ou `watch` e coloque o arquivo somente na pasta
-correspondente. Nomes que tentem sair dessa pasta são rejeitados.
-
-## Diagnóstico da Etapa 1
-
-O ponto de entrada atual é um preflight não destrutivo:
-
-```powershell
-python main.py --preflight `
-  --participant-id EDI-21-2196 `
-  --kit-id KIT-03 `
-  --google-email ecg_p21@uea.edu.br
-```
-
-A senha é solicitada com entrada protegida, permanece apenas em memória e não
-aparece no resumo. O preflight pode terminar com alertas e ainda estar pronto;
-falhas impedem o provisionamento. A confirmação formal do operador será feita
-no wizard da Etapa 4.
+O catálogo está em `config/applications.yaml`.
 
 ## Estrutura
 
 ```text
-backend/adb/       cliente ADB, resultado de comando e detecção
-backend/models/    modelos sem dependência de PySide6
-backend/services/  configuração, catálogo de APKs e preflight
-backend/workflows/ reservado para a máquina de estados da Etapa 3
-config/            configurações fixas em YAML
-apks/              binários locais ignorados pelo Git
-data/              backups, sessões, relatórios e logs ignorados pelo Git
-frontend/          reservado para o wizard PySide6 da Etapa 4
-tests/             testes unitários com ADB simulado
+backend/adb/                 cliente ADB e detecção de dispositivos
+backend/models/              modelos de domínio e entrada segura
+backend/services/            configurações, APKs e preflight
+backend/workflows/           reservado para o workflow operacional
+frontend/app.py              inicialização do PySide6
+frontend/main_window.py      janela e navegação do wizard
+frontend/controllers/        estado e integração com o backend
+frontend/steps/              páginas do wizard
+frontend/widgets/            componentes visuais reutilizáveis
+frontend/workers.py          execução assíncrona
+config/                      arquivos YAML
+data/                        logs, sessões, relatórios e backups
+apks/                        instaladores locais
+tests/                       testes de backend e interface
 ```
 
 ## Segurança
 
-- o cliente usa listas de argumentos e `shell=False`;
+- comandos ADB usam listas de argumentos e `shell=False`;
 - a senha Google não integra modelos persistentes;
-- códigos de pareamento serão enviados por `stdin`, nunca por argumento ou log;
-- nenhum comando destrutivo existe na Etapa 1;
-- os APKs são resolvidos com `pathlib` e confinados à pasta do dispositivo;
-- o preflight é somente diagnóstico;
-- dados clínicos não são lidos nem registrados.
+- a senha não aparece no resumo, nos logs ou no `model_dump`;
+- o e-mail é parcialmente mascarado na confirmação;
+- tarefas demoradas não bloqueiam a janela;
+- nenhum comando de limpeza, reset ou instalação é chamado pelo frontend atual;
+- erros conhecidos são apresentados ao operador sem depender de traceback.
 
 ## Testes
 
@@ -123,12 +137,4 @@ tests/             testes unitários com ADB simulado
 python -m pytest -q
 ```
 
-Os testes usam processos e respostas ADB simulados; não conecte um dispositivo
-para executá-los.
-
-## Próximas etapas
-
-A persistência atômica e a retomada entram na Etapa 2. A máquina de estados
-impedirá limpeza e reset antes do backup validado na Etapa 3. O frontend da
-Etapa 4 chamará somente serviços do backend e executará tarefas longas fora da
-thread da interface.
+Os testes de interface usam `pytest-qt` e não dependem de celular físico.
