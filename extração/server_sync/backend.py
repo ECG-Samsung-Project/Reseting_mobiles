@@ -32,6 +32,7 @@ class ServerSyncBackend:
         remote_scanner: RemoteInventoryScanner | None = None,
         comparator: InventoryComparator | None = None,
     ) -> None:
+        self._uses_default_config_loader = config_loader is None
         self.config_loader = config_loader or ServerSyncConfig.load
         self.client_factory = client_factory or SshSftpClient
         self.local_scanner = local_scanner or LocalInventoryScanner()
@@ -45,6 +46,7 @@ class ServerSyncBackend:
         self,
         status_callback: StatusCallback = None,
         password_prompt: PasswordPrompt = None,
+        connection_profile: str | None = None,
     ) -> ComparisonReport:
         def set_status(text: str) -> None:
             if status_callback:
@@ -54,7 +56,17 @@ class ServerSyncBackend:
         self._active_report = None
 
         set_status("Carregando configuração...")
-        config = self.config_loader()
+        if connection_profile is None:
+            config = self.config_loader()
+        elif self._uses_default_config_loader:
+            config = ServerSyncConfig.load(
+                connection_profile=connection_profile,
+            )
+        else:
+            raise RuntimeError(
+                "O carregador de configuração personalizado não aceita "
+                "seleção de perfil."
+            )
         config.validate_local_environment()
         config = self._resolve_runtime_password(
             config=config,
@@ -158,6 +170,10 @@ class ServerSyncBackend:
             return None
 
         return self._active_config.safe_connection_summary()
+
+    def invalidate_comparison(self) -> None:
+        self._active_report = None
+        self._active_config = None
 
     @staticmethod
     def _resolve_runtime_password(

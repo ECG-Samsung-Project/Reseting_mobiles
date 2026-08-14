@@ -81,6 +81,77 @@ class ServerSyncConfigTests(unittest.TestCase):
             ):
                 ServerSyncConfig.from_mapping(values)
 
+    def test_selects_external_connection_profile(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
+            values = self.make_values(Path(temporary).resolve())
+            values.update(
+                {
+                    "ECG_SYNC_EXTERNAL_HOST": "external.example.test",
+                    "ECG_SYNC_EXTERNAL_PORT": "26157",
+                    "ECG_SYNC_LAB_HOST": "31.0.0.3",
+                    "ECG_SYNC_LAB_PORT": "22",
+                }
+            )
+            config = ServerSyncConfig.from_mapping(
+                values,
+                connection_profile="external",
+            )
+
+        self.assertEqual(config.host, "external.example.test")
+        self.assertEqual(config.port, 26157)
+        self.assertEqual(config.connection_profile, "external")
+        self.assertIn("Externo", config.safe_connection_summary())
+
+    def test_selects_laboratory_connection_profile(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
+            values = self.make_values(Path(temporary).resolve())
+            values.update(
+                {
+                    "ECG_SYNC_EXTERNAL_HOST": "external.example.test",
+                    "ECG_SYNC_EXTERNAL_PORT": "26157",
+                    "ECG_SYNC_LAB_HOST": "31.0.0.3",
+                    "ECG_SYNC_LAB_PORT": "22",
+                }
+            )
+            config = ServerSyncConfig.from_mapping(
+                values,
+                connection_profile="laboratory",
+            )
+
+        self.assertEqual(config.host, "31.0.0.3")
+        self.assertEqual(config.port, 22)
+        self.assertEqual(config.connection_profile, "laboratory")
+        self.assertIn(
+            "Laboratório (rede local)",
+            config.safe_connection_summary(),
+        )
+
+    def test_rejects_unknown_connection_profile(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
+            values = self.make_values(Path(temporary).resolve())
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Perfil de conexão inválido",
+            ):
+                ServerSyncConfig.from_mapping(
+                    values,
+                    connection_profile="unknown",
+                )
+
+    def test_requires_selected_profile_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
+            values = self.make_values(Path(temporary).resolve())
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "ECG_SYNC_LAB_HOST",
+            ):
+                ServerSyncConfig.from_mapping(
+                    values,
+                    connection_profile="laboratory",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

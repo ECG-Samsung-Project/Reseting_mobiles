@@ -20,6 +20,16 @@ DEFAULT_SYNC_FOLDERS = (
     "bio_data",
 )
 
+CONNECTION_PROFILES = {
+    "external": "Externo",
+    "laboratory": "Laboratório (rede local)",
+}
+
+PROFILE_ENV_PREFIXES = {
+    "external": "ECG_SYNC_EXTERNAL",
+    "laboratory": "ECG_SYNC_LAB",
+}
+
 
 def _parse_bool(value: str | None, default: bool) -> bool:
     if value is None or not value.strip():
@@ -68,11 +78,13 @@ class ServerSyncConfig:
     look_for_keys: bool = True
     verify_sha256: bool = True
     connect_timeout_seconds: float = 20.0
+    connection_profile: str | None = None
 
     @classmethod
     def load(
         cls,
         env_path: Path | None = None,
+        connection_profile: str | None = None,
     ) -> "ServerSyncConfig":
         resolved_env_path = env_path or (
             Path(__file__).resolve().parents[2] / ".env"
@@ -92,12 +104,16 @@ class ServerSyncConfig:
                 override=False,
             )
 
-        return cls.from_mapping(os.environ)
+        return cls.from_mapping(
+            os.environ,
+            connection_profile=connection_profile,
+        )
 
     @classmethod
     def from_mapping(
         cls,
         values: Mapping[str, str],
+        connection_profile: str | None = None,
     ) -> "ServerSyncConfig":
         def required(name: str) -> str:
             value = _optional_text(values.get(name))
@@ -109,14 +125,54 @@ class ServerSyncConfig:
 
             return value
 
-        host = required("ECG_SYNC_HOST")
-        username = required("ECG_SYNC_USER")
+        selected_profile = connection_profile or _optional_text(
+            values.get("ECG_SYNC_DEFAULT_CONNECTION")
+        )
+
+        if (
+            selected_profile is not None
+            and selected_profile not in CONNECTION_PROFILES
+        ):
+            valid_profiles = ", ".join(CONNECTION_PROFILES)
+            raise RuntimeError(
+                "Perfil de conexão inválido: "
+                f"{selected_profile!r}. Use: {valid_profiles}."
+            )
+
+        profile_prefix = (
+            PROFILE_ENV_PREFIXES[selected_profile]
+            if selected_profile is not None
+            else None
+        )
+
+        def profile_value(
+            name: str,
+            fallback_to_common: bool = True,
+        ) -> str:
+            if profile_prefix is not None:
+                profile_name = f"{profile_prefix}_{name}"
+                value = _optional_text(values.get(profile_name))
+
+                if value is not None:
+                    return value
+
+                if not fallback_to_common:
+                    return required(profile_name)
+
+            return required(f"ECG_SYNC_{name}")
+
+        host = profile_value("HOST", fallback_to_common=False)
+        username = profile_value("USER")
         local_raw_root = Path(required("ECG_SYNC_LOCAL_RAW_ROOT")).expanduser()
         remote_raw_root = PurePosixPath(
             required("ECG_SYNC_REMOTE_RAW_ROOT")
         )
 
-        port_text = values.get("ECG_SYNC_PORT", "22").strip()
+        port_text = (
+            profile_value("PORT", fallback_to_common=False)
+            if profile_prefix is not None
+            else values.get("ECG_SYNC_PORT", "22").strip()
+        )
 
         try:
             port = int(port_text)
@@ -243,6 +299,7 @@ class ServerSyncConfig:
                 True,
             ),
             connect_timeout_seconds=connect_timeout_seconds,
+            connection_profile=selected_profile,
         )
 
     def validate_local_environment(self) -> None:
@@ -265,8 +322,15 @@ class ServerSyncConfig:
             )
 
     def safe_connection_summary(self) -> str:
+        profile_summary = ""
+
+        if self.connection_profile is not None:
+            profile_summary = (
+                f"{CONNECTION_PROFILES[self.connection_profile]} | "
+            )
+
         return (
-            f"{self.username}@{self.host}:{self.port} | "
+            f"{profile_summary}{self.username}@{self.host}:{self.port} | "
             f"{self.local_raw_root} → {self.remote_raw_root} | "
             f"autenticação: {self.authentication_method}"
         )

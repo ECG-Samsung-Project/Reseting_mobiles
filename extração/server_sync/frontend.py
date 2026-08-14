@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from .backend import ServerSyncBackend
+from .config import CONNECTION_PROFILES
 from .models import (
     ComparisonEntry,
     ComparisonReport,
@@ -84,6 +85,29 @@ def create_server_sync_frame(parent: tk.Widget) -> tk.Frame:
     controls_frame = tk.Frame(frame)
     controls_frame.pack(fill="x", padx=16, pady=6)
 
+    profile_label_to_key = {
+        label: key for key, label in CONNECTION_PROFILES.items()
+    }
+    connection_profile_var = tk.StringVar(
+        value=CONNECTION_PROFILES["external"]
+    )
+
+    profile_label = tk.Label(
+        controls_frame,
+        text="Acesso:",
+        font=("Arial", 10, "bold"),
+    )
+    profile_label.pack(side="left", padx=(4, 2))
+
+    profile_combobox = ttk.Combobox(
+        controls_frame,
+        textvariable=connection_profile_var,
+        values=tuple(CONNECTION_PROFILES.values()),
+        state="readonly",
+        width=23,
+    )
+    profile_combobox.pack(side="left", padx=(0, 12))
+
     verify_button = tk.Button(
         controls_frame,
         text="Verificar servidor",
@@ -120,7 +144,10 @@ def create_server_sync_frame(parent: tk.Widget) -> tk.Frame:
     upload_button.pack(side="right", padx=4)
 
     connection_var = tk.StringVar(
-        value="Configuração: será carregada ao verificar."
+        value=(
+            "Destino selecionado: Externo. "
+            "A configuração será carregada ao verificar."
+        )
     )
     connection_label = tk.Label(
         frame,
@@ -341,6 +368,9 @@ def create_server_sync_frame(parent: tk.Widget) -> tk.Frame:
 
         verify_button.config(
             state="disabled" if busy else "normal"
+        )
+        profile_combobox.config(
+            state="disabled" if busy else "readonly"
         )
         selection_state = (
             "normal" if has_new and not busy else "disabled"
@@ -602,17 +632,44 @@ def create_server_sync_frame(parent: tk.Widget) -> tk.Frame:
 
         update_selection_summary()
 
-    def handle_verify() -> None:
+    def reset_comparison_view() -> None:
         state["report"] = None
+        backend.invalidate_comparison()
         selected_keys.clear()
-        update_selection_summary()
+        new_item_by_key.clear()
+        new_key_by_item.clear()
+
+        for status, tree in trees.items():
+            tree.delete(*tree.get_children())
+            title = STATUS_TITLES[status]
+            tables_notebook.tab(tab_frames[status], text=title)
+            summary_vars[status].set(f"{title}: 0 arquivos — 0 B")
+
         partial_var.set("")
         set_result_text("")
+        update_selection_summary()
+
+    def handle_profile_change(_event: tk.Event | None = None) -> None:
+        reset_comparison_view()
+        selected_label = connection_profile_var.get()
+        connection_var.set(
+            f"Destino selecionado: {selected_label}. "
+            "Clique em Verificar servidor."
+        )
+        status_var.set(
+            "Destino alterado. Verifique o servidor antes de enviar."
+        )
+
+    def handle_verify() -> None:
+        reset_comparison_view()
+        selected_label = connection_profile_var.get()
+        connection_profile = profile_label_to_key[selected_label]
 
         def task() -> ComparisonReport:
             return backend.compare_all(
                 status_callback=set_status_from_worker,
                 password_prompt=ask_for_server_password,
+                connection_profile=connection_profile,
             )
 
         def on_success(report: ComparisonReport) -> None:
@@ -742,6 +799,7 @@ def create_server_sync_frame(parent: tk.Widget) -> tk.Frame:
         confirmed = messagebox.askyesno(
             "Confirmar upload",
             "Deseja enviar os arquivos selecionados?\n\n"
+            f"Destino: {backend.get_active_connection_summary()}\n"
             f"Quantidade: {len(selected_keys)}\n"
             f"Tamanho total: {format_size(selected_size)}\n\n"
             "Conflitos não serão sobrescritos e nenhum arquivo "
@@ -812,5 +870,6 @@ def create_server_sync_frame(parent: tk.Widget) -> tk.Frame:
     select_all_button.config(command=select_all)
     deselect_all_button.config(command=deselect_all)
     upload_button.config(command=handle_upload)
+    profile_combobox.bind("<<ComboboxSelected>>", handle_profile_change)
 
     return frame
