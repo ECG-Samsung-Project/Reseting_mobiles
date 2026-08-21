@@ -31,6 +31,23 @@ class FakeClient:
 
 
 class ServerSyncBackendTests(unittest.TestCase):
+    def test_remote_status_does_not_require_local_raw_folder(self) -> None:
+        config = ServerSyncConfig(
+            host="example.test",
+            username="collector",
+            local_raw_root=Path("missing-local-raw").resolve(),
+            remote_raw_root=PurePosixPath("/remote/raw"),
+        )
+        backend = ServerSyncBackend(
+            config_loader=lambda: config,
+            client_factory=FakeClient,  # type: ignore[arg-type]
+            remote_scanner=EmptyRemoteScanner(),  # type: ignore[arg-type]
+        )
+
+        inventory = backend.inspect_remote()
+
+        self.assertEqual(inventory.files, ())
+
     def test_requests_password_and_keeps_it_out_of_safe_summary(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
             local_root = Path(temporary).resolve()

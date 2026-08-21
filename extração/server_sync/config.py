@@ -309,6 +309,9 @@ class ServerSyncConfig:
                 f"{self.local_raw_root}"
             )
 
+        self.validate_connection_environment()
+
+    def validate_connection_environment(self) -> None:
         if self.private_key is not None and not self.private_key.is_file():
             raise RuntimeError(
                 "Chave SSH privada não encontrada:\n"
