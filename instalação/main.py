@@ -1,13 +1,13 @@
 import tkinter as tk
 from tkinter import messagebox
 
-from backend.process import setup_device
+from backend.process import setup_device, reset_device
 
 
 root = tk.Tk()
 
 root.title("Instalador de Apps")
-root.geometry("650x270")
+root.geometry("650x350")
 root.resizable(False, False)
 
 
@@ -62,6 +62,28 @@ def start_installation():
             str(error),
         )
 
+def start_reseting_device():
+    try:
+        reset_device(progress_callback=update_status)
+        messagebox.showinfo(
+            "Sucesso",
+            "Celular reiniciado em modo de recuperação.",
+        )
+    except Exception as error:
+        update_status("Erro ao resetar o celular.")
+        messagebox.showerror(
+            "Erro",
+            str(error),
+        )
+
+reset_button = tk.Button(
+    root,
+    text="Resetar celular",
+    font=("Arial", 12),
+    width=25,
+    command=start_reseting_device,
+)
+reset_button.pack(pady=20)
 
 install_button = tk.Button(
     root,

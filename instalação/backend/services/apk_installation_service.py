@@ -8,6 +8,25 @@ def get_apps_folder() -> Path:
 
     return Path(__file__).resolve().parent.parent.parent.parent / "apps"
 
+def uninstall_all_apps():
+    for app in ["com.hhw.hrpclinical", "com.sec.smartring2"]:
+        uninstall_app(app)   
+
+def is_app_installed(package_name: str) -> bool:
+    output = run_command(
+        ["adb", "shell", "pm", "list", "packages", package_name],
+        raise_on_error=False,
+    )
+
+    return package_name in output
+
+def uninstall_app(package_name: str) -> str:
+    if not is_app_installed(package_name):
+        return f"App {package_name} não está instalado."
+    return run_command(
+        ["adb", "uninstall", package_name],
+        raise_on_error=False,
+    )
 
 def install_apk(apk_path: Path) -> str:
     commands_to_try = [
