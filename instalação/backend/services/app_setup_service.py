@@ -6,6 +6,7 @@ from backend.services.apk_installation_service import (
     install_apk,
 )
 from backend.services.permission_service import grant_common_permissions
+from backend.services.ui_automation_service import tap
 
 
 def setup_apps(
@@ -29,7 +30,7 @@ def setup_apps(
 
         progress_callback(f"Instalando {app['apk']}...")
         install_output = install_apk(apk_path)
-
+        
         progress_callback(f"Configurando {app['package']}...")
         granted = grant_common_permissions(app["package"])
 

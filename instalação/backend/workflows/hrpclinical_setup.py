@@ -3,6 +3,7 @@ from backend.services.ui_automation_service import open_app, tap
 
 def setup():
     open_app("com.hhw.hrpclinical")
+    time.sleep(2)
     tap(500, 1400) ## Tap on "Select"
     time.sleep(1)
     tap(150, 1250) ## Tap on Documents
