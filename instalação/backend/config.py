@@ -1,6 +1,6 @@
 APPS_TO_INSTALL = [
     {
-        "apk": "com_sec_smartring2-Phone-24120318-1_3_4-1.apk",
+        "apk": "Smartring App.2.1.3.apk",
         "package": "com.sec.android.app.shealthmonitor",
     },
     {

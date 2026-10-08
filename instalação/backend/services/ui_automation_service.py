@@ -35,27 +35,19 @@ def tap(x: int, y: int):
 
 
 def input_text(text: str, delay: float = 0.2):
-    words = text.split()
-    time.sleep(delay)  # Pequena pausa antes de começar a digitar
-    for index, word in enumerate(words):
-        run_command([
-            "adb",
-            "shell",
-            "input",
-            "text",
-            word,
-        ])
+    time.sleep(delay)
 
-        if index < len(words) - 1:
-            run_command([
-                "adb",
-                "shell",
-                "input",
-                "keyevent",
-                "KEYCODE_SPACE",
-            ])
+    adb_text = text.replace(" ", "%s")
 
-        time.sleep(delay)
+    run_command([
+        "adb",
+        "shell",
+        "input",
+        "text",
+        adb_text,
+    ])
+
+    time.sleep(delay)
 
 def tap_home():
     run_command([
@@ -92,7 +84,9 @@ def unlock_screen():
         print("Tela já está desbloqueada.")
         tap_home()
         return
+    print("Tela está bloqueada. Tentando desbloquear...")
 
+    print("Tentando dispensar o keyguard...")
     # Tenta dispensar o keyguard
     run_command(
         ["adb", "shell", "wm", "dismiss-keyguard"],
@@ -102,6 +96,7 @@ def unlock_screen():
     # Dá tempo para a animação do Android terminar
     time.sleep(1)
     tap(500, 1800)
+    print("Swipe inicial realizado para desbloquear a tela.")
     # Swipe vertical mais forte
     swipe(
         540, 2100,
@@ -113,6 +108,7 @@ def unlock_screen():
 
     # Segunda tentativa, caso o primeiro não tenha passado
     if is_screen_locked():
+        print("Tela ainda está bloqueada. Tentando segundo swipe...")
         swipe(
             540, 2100,
             540, 400,

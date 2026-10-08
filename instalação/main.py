@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox
-
+import customtkinter as ctk
 from backend.process import setup_device, reset_device
 
 
@@ -45,10 +45,19 @@ def update_status(message: str):
 
 
 def start_installation():
+    selected_process = process_type.get()
     try:
-        final_log = setup_device(
-            progress_callback=update_status
-        )
+        if selected_process == "InClinic":
+            final_log = setup_device(
+                process_type=selected_process,
+                progress_callback=update_status
+            )
+        else:
+            # Handle other process types if needed
+            final_log = setup_device(
+                process_type=selected_process,
+                progress_callback=update_status
+            )
 
         messagebox.showinfo(
             "Sucesso",
@@ -94,5 +103,13 @@ install_button = tk.Button(
 )
 install_button.pack(pady=20)
 
+process_type = ctk.StringVar(value = "InClinic")
+
+process_dropdown = ctk.CTkOptionMenu(
+    root,
+    values=["InClinic", "FreeLiving"],
+    variable=process_type,
+)
+process_dropdown.pack(pady=10)
 
 root.mainloop()

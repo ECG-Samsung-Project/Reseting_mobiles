@@ -10,7 +10,8 @@ def run_command(command: list[str], raise_on_error: bool = True) -> str:
     )
 
     output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
-
+    print("Running command:", " ".join(command))
+    print(output)
     if raise_on_error and result.returncode != 0:
         raise RuntimeError(output)
 
