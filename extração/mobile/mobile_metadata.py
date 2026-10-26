@@ -50,6 +50,7 @@ class MobileMetadataBuilder:
 
             "participant_id": participant_id,
             "id_participant": participant_id,
+            "registration": participant_resolution.get("registration"),
 
             "raw_participant_id": participant_resolution["selected_raw_id"],
             "participant_lookup": {

@@ -82,6 +82,7 @@ class WatchMetadataBuilder:
             "landing_folder": collection_metadata["folder_name"],
 
             "participant_id": selected_id,
+            "registration": id_metadata.get("registration"),
             "id_participant": selected_id,
             "watch_id": selected_id,
             "selected_id": selected_id,

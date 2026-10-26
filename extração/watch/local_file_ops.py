@@ -1,5 +1,17 @@
 import shutil
+import json
 from pathlib import Path
+from core.extraction import digest
+
+
+def is_registration(path: Path) -> bool:
+    if path.suffix.lower() != ".json":
+        return False
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8-sig"))
+        return isinstance(doc, dict) and str(doc.get("project", "")).strip().upper() == "ECG" and "participant_id" in doc and "kit_type" in doc
+    except (ValueError, UnicodeError):
+        return False
 
 
 def get_unique_local_path(destination_path: Path) -> Path:
@@ -53,7 +65,13 @@ def merge_local_folder_contents(
 
         else:
             if target.exists():
-                target = get_unique_local_path(target)
+                if target.is_file() and digest(child) == digest(target):
+                    child.unlink()
+                    continue
+                if is_registration(child) and is_registration(target):
+                    target = get_unique_local_path(target)
+                else:
+                    raise RuntimeError(f"Arquivos diferentes com o mesmo caminho nas pastas de coleta: {target}. Origem preservada em {child}.")
 
             shutil.move(str(child), str(target))
 

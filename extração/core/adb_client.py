@@ -19,6 +19,7 @@ class AdbClient:
         args: list[str],
         check: bool = True,
         input_text: str | None = None,
+        timeout: float | None = None,
     ) -> AdbCommandResult:
         commands_without_device = {
             "version",
@@ -47,7 +48,10 @@ class AdbClient:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                timeout=timeout if timeout is not None else (600 if args and args[0] == "pull" else 120),
             )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(f"Tempo limite excedido no ADB ({args[0] if args else 'comando'}).") from error
         except FileNotFoundError:
             raise RuntimeError(
                 "ADB não encontrado. Instale o Android Platform Tools "

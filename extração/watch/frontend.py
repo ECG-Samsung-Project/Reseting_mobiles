@@ -1,5 +1,6 @@
 # watch/frontend.py
 
+import threading
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 
@@ -106,7 +107,7 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
 
     output_label = tk.Label(
         collection_context_frame,
-        text="Destino: selecione Free Living ou In Clinic",
+        text="Destino: automático pelo cadastro ECG (IC/FL)",
         font=("Arial", 9),
         wraplength=650,
         justify="center",
@@ -124,7 +125,7 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
 
         if not collection_context:
             output_label.config(
-                text="Destino: selecione Free Living ou In Clinic"
+                text="Destino: automático pelo cadastro ECG (IC/FL)"
             )
             return
 
@@ -133,7 +134,7 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
         )
 
         output_label.config(
-            text=f"Destino: {output_root}"
+            text=f"Destino sem cadastro ECG: {output_root}"
         )
 
     collection_context_var.trace_add(
@@ -288,8 +289,7 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
     )
 
     def set_status(text: str) -> None:
-        status_label.config(text=text)
-        frame.update_idletasks()
+        frame.after(0, lambda: status_label.config(text=text))
 
     def set_result_text(text: str) -> None:
         result_text.config(state="normal")
@@ -301,26 +301,45 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
         reason: str,
         suggested_id: str | None,
     ) -> str | None:
-        detected_text = (
-            f"\nID sugerido: {suggested_id}\n"
-            if suggested_id
-            else "\nNenhum ID válido foi encontrado nos arquivos.\n"
-        )
+        response = {"value": None}
+        finished = threading.Event()
 
-        return simpledialog.askstring(
-            "Informar ID do participante",
-            "Não consegui identificar o participante automaticamente.\n\n"
-            f"Motivo: {reason.splitlines()[0]}\n"
-            f"{detected_text}\n"
-            "Informe o ID no formato ABC-12-3456 para continuar:",
-            initialvalue=suggested_id or "",
-            parent=frame,
-        )
+        def show_dialog():
+            try:
+                response["value"] = prompt()
+            finally:
+                finished.set()
+
+        def prompt():
+            detected_text = (
+                f"\nID sugerido: {suggested_id}\n"
+                if suggested_id
+                else "\nNenhum ID válido foi encontrado nos arquivos.\n"
+            )
+
+            result = simpledialog.askstring(
+                "Informar ID do participante",
+                "Não consegui identificar o participante automaticamente.\n\n"
+                f"Motivo: {reason.splitlines()[0]}\n"
+                f"{detected_text}\n"
+                "Informe o ID no formato ABC-12-3456 para continuar:",
+                initialvalue=suggested_id or "",
+                parent=frame,
+            )
+
+            return result
+
+        if threading.current_thread() is threading.main_thread():
+            return prompt()
+        frame.after(0, show_dialog)
+        finished.wait()
+        return response["value"]
 
     def format_watch_inspection_result(
         result: dict,
     ) -> str:
         source_names = {
+            "ecg_registration": "cadastro ECG",
             "watch_files": "arquivos do relógio",
             "manual_input": "informado manualmente",
         }
@@ -487,27 +506,16 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
             )
 
     def handle_extract_documents() -> None:
-        collection_context = collection_context_var.get()
+        values = dict(
+            watch_number=watch_number_entry.get(), ip=watch_ip_entry.get(),
+            pairing_port=pairing_port_entry.get(), connect_port=connect_port_entry.get(),
+            collection_context=collection_context_var.get(),
+        )
+        buttons = (pair_button, connect_button, disconnect_button, inspect_button, extract_button)
+        for button in buttons:
+            button.config(state="disabled")
 
-        if not collection_context:
-            messagebox.showerror(
-                "Contexto não informado",
-                "Selecione Free Living ou In Clinic antes de extrair.",
-                parent=frame,
-            )
-            return
-
-        try:
-            result = backend.extract_documents(
-                watch_number=watch_number_entry.get(),
-                ip=watch_ip_entry.get(),
-                pairing_port=pairing_port_entry.get(),
-                connect_port=connect_port_entry.get(),
-                collection_context=collection_context,
-                status_callback=set_status,
-                watch_id_prompt=ask_for_watch_id,
-            )
-
+        def on_success(result):
             set_status("Extração concluída.")
 
             id_source = (
@@ -532,13 +540,20 @@ def create_watch_frame(parent: tk.Widget) -> tk.Frame:
                 f"{result['metadata_file']}",
             )
 
-        except Exception as error:
-            set_status("Erro na extração.")
+        def worker():
+            try:
+                result = backend.extract_documents(
+                    **values, status_callback=set_status, watch_id_prompt=ask_for_watch_id,
+                )
+                frame.after(0, lambda: on_success(result))
+            except Exception as error:
+                message = str(error)
+                set_status("Erro na extração.")
+                frame.after(0, lambda: messagebox.showerror("Erro", message, parent=frame))
+            finally:
+                frame.after(0, lambda: [button.config(state="normal") for button in buttons])
 
-            messagebox.showerror(
-                "Erro",
-                str(error),
-            )
+        threading.Thread(target=worker, daemon=True).start()
 
     pair_button = tk.Button(
         pair_frame,

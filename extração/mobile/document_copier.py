@@ -7,6 +7,8 @@ from pathlib import Path
 
 from core.adb_client import AdbClient
 from core.android_fs import AndroidFileSystem
+from core.extraction import copy_verified, create_verified_archive
+from watch.local_file_ops import merge_local_folder_contents
 
 
 class MobileDocumentCopier:
@@ -56,39 +58,17 @@ class MobileDocumentCopier:
         staging_folder = staging_root / archive_path.stem
         staging_folder.mkdir(parents=True, exist_ok=True)
 
-        document_items = self.android_fs.list_item_paths(
-            self.documents_path
-        )
-
-        if not document_items:
-            shutil.rmtree(staging_root, ignore_errors=True)
-
-            raise RuntimeError(
-                f"Nenhum item encontrado em {self.documents_path}."
-            )
-
         try:
-            for item_path in document_items:
-                result = self.adb.run(
-                    [
-                        "pull",
-                        item_path,
-                        str(staging_folder),
-                    ],
-                    check=False,
-                )
-
-                if result.returncode != 0:
-                    raise RuntimeError(
-                        "Erro ao copiar arquivos do celular.\n"
-                        f"Comando: adb pull {item_path} "
-                        f"{staging_folder}\n"
-                        f"Erro:\n{result.stderr or result.stdout}"
-                    )
-
-        except Exception:
-            shutil.rmtree(staging_root, ignore_errors=True)
-            raise
+            sources = self.android_fs.existing_source_paths(self.documents_path)
+            copied = 0
+            for index, source in enumerate(sources, 1):
+                destination = staging_root / f"source_{index:02d}"
+                copied += len(copy_verified(self.adb, self.android_fs, source, destination))
+                merge_local_folder_contents(destination, staging_folder)
+            if not copied:
+                raise RuntimeError("Nenhum arquivo encontrado nas pastas de coleta.")
+        except Exception as error:
+            raise RuntimeError(f"Extração incompleta. Temporários preservados em {staging_root}. {error}") from error
 
         return staging_folder, archive_path
 
@@ -97,20 +77,7 @@ class MobileDocumentCopier:
         staging_folder: Path,
         archive_path: Path,
     ) -> Path:
-        archive_path.parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            created_archive = shutil.make_archive(
-                base_name=str(archive_path.with_suffix("")),
-                format="zip",
-                root_dir=staging_folder,
-            )
-
-        except Exception:
-            archive_path.unlink(missing_ok=True)
-            raise
-
-        return Path(created_archive)
+        return create_verified_archive(staging_folder, archive_path)
 
     @staticmethod
     def cleanup_staging(staging_folder: Path) -> None:

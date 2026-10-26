@@ -1,4 +1,5 @@
 from pathlib import Path
+import shlex
 
 from core.adb_client import AdbClient
 
@@ -6,6 +7,17 @@ from core.adb_client import AdbClient
 class AndroidFileSystem:
     def __init__(self, adb: AdbClient) -> None:
         self.adb = adb
+
+    def existing_source_paths(self, documents_path: str = "/sdcard/Documents") -> list[str]:
+        sources = []
+        for path in dict.fromkeys((documents_path.rstrip("/"), "/sdcard/Download", "/sdcard/Downloads")):
+            quoted = shlex.quote(path)
+            result = self.adb.run(["shell", f"if [ -d {quoted} ]; then echo EXISTS; elif [ ! -e {quoted} ]; then echo MISSING; else exit 1; fi"])
+            if result.stdout.strip() == "EXISTS":
+                sources.append(path)
+            elif result.stdout.strip() != "MISSING":
+                raise RuntimeError(f"Não consegui verificar a pasta {path}.")
+        return sources
 
     def check_path_exists(self, android_path: str) -> None:
         result = self.adb.run(

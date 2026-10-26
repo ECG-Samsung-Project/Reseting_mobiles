@@ -5,6 +5,8 @@ from typing import Callable
 from core.adb_client import AdbClient
 from core.android_fs import AndroidFileSystem
 from core.metadata_writer import write_json_metadata
+from core.extraction import save_active_registration
+from core.registration import RegistrationError
 
 from .config import MobileExtractionConfig
 from .document_copier import MobileDocumentCopier
@@ -154,6 +156,8 @@ class MobileBackend:
     ) -> dict:
         try:
             return self.participant_resolver.resolve_from_phone()
+        except RegistrationError:
+            raise
         except RuntimeError as automatic_error:
             if participant_id_prompt is None:
                 raise
@@ -216,8 +220,6 @@ class MobileBackend:
 
         set_status(f"Celular encontrado: {device_id}")
 
-        set_status(f"Verificando pasta {self.config.phone_documents_path}...")
-        self.android_fs.check_path_exists(self.config.phone_documents_path)
 
         set_status("Varrendo pasta Documents...")
         folder_summaries = self.android_fs.get_folder_summaries(
@@ -271,13 +273,6 @@ class MobileBackend:
                 status_callback(text)
 
         mobile_name = self.format_mobile_name(mobile_number)
-        collection_context = self.config.normalize_collection_context(
-            collection_context
-        )
-        collection_metadata = self.config.get_collection_context_metadata(
-            collection_context
-        )
-        output_root = self.config.get_output_root(collection_context)
         timestamp = self.get_current_timestamp()
 
         set_status("Verificando celular conectado...")
@@ -285,8 +280,6 @@ class MobileBackend:
 
         set_status(f"Celular encontrado: {device_id}")
 
-        set_status(f"Verificando pasta {self.config.phone_documents_path}...")
-        self.android_fs.check_path_exists(self.config.phone_documents_path)
 
         set_status("Buscando ID do participante automaticamente...")
         participant_resolution = self.resolve_participant(
@@ -295,6 +288,16 @@ class MobileBackend:
 
         participant_id = participant_resolution["participant_id"]
         selected_raw_id = participant_resolution["selected_raw_id"]
+
+        registration = participant_resolution.get("registration")
+        if registration:
+            collection_context = registration["collection_context"]
+            set_status(f"Cadastro ECG: {participant_id} / {registration['kit_type']}")
+        elif not collection_context:
+            raise RuntimeError("Cadastro ECG não encontrado. Selecione Free Living ou In Clinic antes de extrair.")
+        collection_context = self.config.normalize_collection_context(collection_context)
+        collection_metadata = self.config.get_collection_context_metadata(collection_context)
+        output_root = self.config.get_output_root(collection_context)
 
         if participant_resolution["lookup_source"] == "manual_input":
             set_status(f"ID informado manualmente: {participant_id}")
@@ -321,6 +324,8 @@ class MobileBackend:
         )
 
         try:
+            if registration:
+                save_active_registration(staging_folder, registration)
             set_status("Criando JSON de metadados...")
 
             metadata = self.metadata_builder.build_metadata(
@@ -347,7 +352,9 @@ class MobileBackend:
                 archive_path=archive_path,
             )
 
-        finally:
+        except Exception as error:
+            raise RuntimeError(f"Extração incompleta. Cópia preservada em {staging_folder}. {error}") from error
+        else:
             self.document_copier.cleanup_staging(staging_folder)
 
         set_status("Extração concluída.")

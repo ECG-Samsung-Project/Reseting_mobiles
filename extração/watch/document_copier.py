@@ -7,6 +7,7 @@ from pathlib import Path
 
 from core.adb_client import AdbClient
 from core.android_fs import AndroidFileSystem
+from core.extraction import copy_verified, create_verified_archive
 
 
 class WatchDocumentCopier:
@@ -55,39 +56,9 @@ class WatchDocumentCopier:
     ) -> Path:
         destination_folder.mkdir(parents=True, exist_ok=True)
 
-        document_items = self.android_fs.list_item_paths(
-            self.documents_path
-        )
-
-        if not document_items:
-            shutil.rmtree(destination_folder, ignore_errors=True)
-
-            raise RuntimeError(
-                f"Nenhum item encontrado em {self.documents_path}."
-            )
-
-        try:
-            for item_path in document_items:
-                result = self.adb.run(
-                    [
-                        "pull",
-                        item_path,
-                        str(destination_folder),
-                    ],
-                    check=False,
-                )
-
-                if result.returncode != 0:
-                    raise RuntimeError(
-                        "Erro ao copiar arquivos do relógio.\n"
-                        f"Comando: adb pull {item_path} "
-                        f"{destination_folder}\n"
-                        f"Erro:\n{result.stderr or result.stdout}"
-                    )
-
-        except Exception:
-            shutil.rmtree(destination_folder, ignore_errors=True)
-            raise
+        report = copy_verified(self.adb, self.android_fs, self.documents_path, destination_folder)
+        if not report:
+            return destination_folder
 
         return destination_folder
 
@@ -96,20 +67,7 @@ class WatchDocumentCopier:
         staging_folder: Path,
         archive_path: Path,
     ) -> Path:
-        archive_path.parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            created_archive = shutil.make_archive(
-                base_name=str(archive_path.with_suffix("")),
-                format="zip",
-                root_dir=staging_folder,
-            )
-
-        except Exception:
-            archive_path.unlink(missing_ok=True)
-            raise
-
-        return Path(created_archive)
+        return create_verified_archive(staging_folder, archive_path)
 
     @staticmethod
     def cleanup_staging(staging_folder: Path) -> None:

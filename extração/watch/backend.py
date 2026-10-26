@@ -5,6 +5,8 @@ from typing import Callable
 from core.adb_client import AdbClient
 from core.android_fs import AndroidFileSystem
 from core.metadata_writer import write_json_metadata
+from core.extraction import save_active_registration
+from core.registration import RegistrationResolver
 
 from .android_storage import WatchAndroidStorage
 from .config import WatchExtractionConfig
@@ -156,6 +158,25 @@ class WatchBackend:
         source_paths: list[str],
         watch_id_prompt: WatchIdPrompt = None,
     ) -> tuple[str, dict]:
+        registration = RegistrationResolver(self.android_fs).resolve(source_paths)
+        if registration:
+            participant_id = registration["participant_id"]
+            return participant_id, {
+                "id_type": "participant_id",
+                "id_pattern": "ABC-12-3456",
+                "ids_found_raw": [participant_id],
+                "ids_valid": [participant_id],
+                "selected_id": participant_id,
+                "has_valid_id": True,
+                "automatic_id_found": True,
+                "resolution_source": "ecg_registration",
+                "has_multiple_valid_ids": False,
+                "multiple_valid_ids_count": 1,
+                "multiple_valid_ids_warning": None,
+                "source_path": registration["source_path"],
+                "warning": None,
+                "registration": registration,
+            }
         ids_found: list[str] = []
         source_results: list[dict] = []
         resolver_errors: list[str] = []
@@ -301,7 +322,6 @@ class WatchBackend:
         )
 
         copied_sources: list[str] = []
-        errors: list[str] = []
 
         try:
             for index, source_path in enumerate(source_paths, start=1):
@@ -329,31 +349,14 @@ class WatchBackend:
                     copied_sources.append(source_path)
 
                 except Exception as exc:
-                    errors.append(f"{source_path}: {exc}")
+                    raise RuntimeError(f"Falha ao copiar {source_path}. Cópia preservada em {staging_folder.parent}. {exc}") from exc
 
-            if not copied_sources:
-                error_text = "\n".join(
-                    f"- {error}"
-                    for error in errors
-                )
-
-                raise RuntimeError(
-                    "Nenhuma pasta com arquivos pôde ser copiada do relógio.\n\n"
-                    "É necessário que pelo menos Download ou Documents "
-                    "tenha arquivos disponíveis."
-                    + (
-                        f"\n\nDetalhes:\n{error_text}"
-                        if error_text
-                        else ""
-                    )
-                )
-
-            # Se uma estiver vazia, a outra será usada normalmente.
+            if not any(p.is_file() for p in staging_folder.rglob("*")):
+                raise RuntimeError("Nenhum arquivo encontrado nas pastas do relógio.")
             return staging_folder, archive_path, copied_sources
 
-        except Exception:
-            WatchDocumentCopier.cleanup_staging(staging_folder)
-            raise
+        except Exception as error:
+            raise RuntimeError(f"Extração incompleta. Temporários preservados em {staging_folder.parent}. {error}") from error
 
     def inspect_watch_documents(
         self,
@@ -438,14 +441,6 @@ class WatchBackend:
         watch_name = self.format_watch_name(watch_number)
         timestamp = self.get_current_timestamp()
 
-        collection_context = self.config.normalize_collection_context(
-            collection_context
-        )
-        collection_metadata = self.config.get_collection_context_metadata(
-            collection_context
-        )
-        output_root = self.config.get_output_root(collection_context)
-
         connect_address = self.get_connect_address(
             ip=ip,
             connect_port=connect_port,
@@ -491,6 +486,16 @@ class WatchBackend:
         else:
             set_status(f"ID encontrado: {selected_id}")
 
+        registration = id_metadata.get("registration")
+        if registration:
+            collection_context = registration["collection_context"]
+            set_status(f"Cadastro ECG: {selected_id} / {registration['kit_type']}")
+        elif not collection_context:
+            raise RuntimeError("Cadastro ECG não encontrado. Selecione Free Living ou In Clinic antes de extrair.")
+        collection_context = self.config.normalize_collection_context(collection_context)
+        collection_metadata = self.config.get_collection_context_metadata(collection_context)
+        output_root = self.config.get_output_root(collection_context)
+
         set_status(
             "Copiando Download e Documents para "
             f"{collection_metadata['label']}..."
@@ -506,6 +511,8 @@ class WatchBackend:
         )
 
         try:
+            if registration:
+                save_active_registration(staging_folder, registration)
             set_status("Criando JSON de metadados...")
 
             metadata = self.metadata_builder.build_metadata(
@@ -539,7 +546,9 @@ class WatchBackend:
                 archive_path=archive_path,
             )
 
-        finally:
+        except Exception as error:
+            raise RuntimeError(f"Extração incompleta. Cópia preservada em {staging_folder}. {error}") from error
+        else:
             WatchDocumentCopier.cleanup_staging(staging_folder)
 
         set_status("Extração concluída.")

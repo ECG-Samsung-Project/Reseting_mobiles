@@ -123,7 +123,7 @@ def create_mobile_frame(parent: tk.Widget) -> tk.Frame:
 
     output_label = tk.Label(
         frame,
-        text="Destino: selecione Free Living ou In Clinic",
+        text="Destino: automático pelo cadastro ECG (IC/FL)",
         font=("Arial", 9),
         wraplength=620,
         justify="center",
@@ -135,12 +135,12 @@ def create_mobile_frame(parent: tk.Widget) -> tk.Frame:
 
         if not collection_context:
             output_label.config(
-                text="Destino: selecione Free Living ou In Clinic"
+                text="Destino: automático pelo cadastro ECG (IC/FL)"
             )
             return
 
         output_root = backend.get_output_root(collection_context)
-        output_label.config(text=f"Destino: {output_root}")
+        output_label.config(text=f"Destino sem cadastro ECG: {output_root}")
 
     collection_context_var.trace_add("write", update_output_label)
 
@@ -306,14 +306,6 @@ def create_mobile_frame(parent: tk.Widget) -> tk.Frame:
     def handle_extract_documents() -> None:
         mobile_number = mobile_number_entry.get()
         collection_context = collection_context_var.get()
-
-        if not collection_context:
-            messagebox.showerror(
-                "Contexto não informado",
-                "Selecione Free Living ou In Clinic antes de extrair.",
-                parent=frame,
-            )
-            return
 
         def task() -> dict:
             return backend.extract_documents(

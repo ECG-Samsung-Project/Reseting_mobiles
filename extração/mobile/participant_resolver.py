@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from core.android_fs import AndroidFileSystem
+from core.registration import RegistrationResolver
 
 from .participant_id import ParticipantIdParser
 from .participant_lookup import ParticipantLookup
@@ -46,6 +47,21 @@ class MobileParticipantResolver:
         return raw_ids
 
     def resolve_from_phone(self) -> dict:
+        registration = RegistrationResolver(self.android_fs).resolve()
+        if registration:
+            participant_id = registration["participant_id"]
+            return {
+                "raw_ids": [participant_id],
+                "selected_raw_id": participant_id,
+                "lookup_key": participant_id,
+                "participant_id": participant_id,
+                "lookup_source": "ecg_registration",
+                "matched_in_csv": False,
+                "has_multiple_valid_ids": False,
+                "multiple_valid_ids_count": 1,
+                "multiple_valid_ids_warning": None,
+                "registration": registration,
+            }
         raw_ids = self.get_raw_participant_ids_from_phone()
         selected_raw_id = raw_ids[0]
 
